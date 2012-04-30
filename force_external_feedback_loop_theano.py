@@ -9,28 +9,16 @@ Created on Tue Apr 24 19:54:48 2012
 
 import math
 from sprandn import sprandn
-from numpy import mat, zeros, random, sin, arange, tanh, eye, sqrt, float32
-import matplotlib
-matplotlib.use('GTkAgg')
+from numpy import mat, zeros, random, sin, arange, tanh, eye, sqrt, float32, array
+#import matplotlib
+# matplotlib.use('GTkAgg')
 #import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 import time
 import theano.tensor as T
-from theano import function
+from theano import function, shared
 
-tx = T.matrix('tx')
-ty = T.matrix('ty')
-tc = T.TensorType(dtype='float32', broadcastable=())('tc')
-tm = T.dot(tx,ty)
-tmul = function([tx,ty], tm)
-ta = tx + ty
-tadd = function([tx,ty], ta)
-tmt = T.dot(tx.T, ty)
-tmultrans = function([tx, ty], tmt)
-tms = tx * (ty * tc)
-tmulscal = function([tx, ty, tc], tms)
-tmst = tx * (ty.T * tc)
-tmulscaltrans = function([tx, ty, tc], tmst)
+
 
 plt.ion()
 
@@ -51,11 +39,9 @@ wo = mat(zeros((nRec2Out, 1), dtype=float32))
 dw = mat(zeros((nRec2Out, 1), dtype=float32))
 wf = float32(2.0*(mat(random.rand(N,1))-0.5))
 
-simtime = arange(0,nsecs-dt,dt, dtype=float32)
-simtime = simtime.reshape(1, len(simtime))
+simtime = float32(arange(0,nsecs-dt,dt))
 simtime_len = len(simtime)
-simtime2 = arange(1*nsecs, 2*nsecs-dt, dt, dtype=float32)
-simtime2 = simtime2.reshape(1, len(simtime2))
+simtime2 = float32(arange(1*nsecs, 2*nsecs-dt, dt))
 
 amp = 1.3
 freq = 1/60.0
@@ -73,9 +59,9 @@ ft2 = ft2 / 1.5
 
 #plt.plot(ft2)
 
-wo_len = zeros((1, simtime_len), dtype=float32)
-zt = zeros((1, simtime_len), dtype=float32)
-zpt = zeros((1, simtime_len), dtype=float32)
+wo_len = float32(zeros(simtime_len))
+zt = float32(zeros(simtime_len))
+zpt = float32(zeros(simtime_len))
 x0 = float32(0.5*mat(random.randn(N,1)))
 z0 = float32(0.5*mat(random.randn(1,1)))
 
@@ -83,74 +69,49 @@ x = x0
 r = tanh(x)
 z = z0
 
+P = float32((1.0/alpha)*eye(nRec2Out, dtype=float32))
+s = array([a.A[0][0] for a in r], dtype=float32)
+tr = shared(s)
+trg = T.vector()
+tp = shared(P)
+tpg = T.matrix()
+trPr = T.dot(tr, T.dot(tp, tr))
+frPr = function([trg, tpg], trPr, givens=[(tr, trg), (tp, tpg)])
+tdP = T.dot(T.dot(tp, tr), T.dot(tr, tp))
+fdP = function([trg, tpg], tdP, givens=[(tr, trg), (tp, tpg)]) 
+
 # Indexing starts from 0!
 ti = -1
-P = (1.0/alpha)*eye(nRec2Out, dtype=float32)
 
-'''
-fig = plt.figure()
-plt.subplot(2,1,1)
-p1, = plt.plot(simtime[:], ft[:])
-plt.hold(True)
-p2, = plt.plot(simtime[:], zt[:])
-plt.title('training')
-plt.legend(('f','z'));	
-plt.xlabel('time')
-plt.ylabel('f and z')
-plt.hold(False)
-	
-plt.subplot (2,1,2);
-p3, = plt.plot(simtime[:], wo_len[:])
-plt.xlabel('time')
-plt.ylabel('|w|')
-plt.legend('|w|')
-plt.draw()
-'''
-        
-dynplot = False
 
 for t in simtime:
     ti += 1
     if ti % (nsecs/2) == 0:
         print "time:",str(t)
-        if dynplot == True:
-            p1.set_ydata(ft)
-            p2.set_ydata(zt)
-            p3.set_ydata(wo_len)
-            plt.draw()
         
     # sim, so x(t) and r(t) are created.
-    # x = (1.0-dt)*x + M*(r*dt) + wf*(z*dt)
-    x = (1.0-dt)*x + (tmul(M, r * dt)) + (tmul(wf, z * dt))
+    x = (1.0 - dt) * x + M * ( r * dt ) + wf * ( z * dt )
     r = tanh(x)
-    # z = wo.T*r
-    z = (tmultrans(wo, r))
+    z = wo.T * r
     
     if ti % learn_every == 0:
         # update inverse correlation matrix
-        # k = P*r
-        k = (tmul(P, r))
-        
-        # rPr = r.T*k
-        rPr = (tmultrans(r, k))
-        c = 1.0/(1.0 + rPr)
-        # c = c.A[0][0]
-        c = c[0]
-        # P = P - k*(k.T*c)
-        P = P + -tmultrans(k, k) * c
+        s = array([a.A[0][0] for a in r], dtype=float32)
+        rPr = mat(frPr(s, P))
+        rPr = rPr.A[0][0]
+        c = float32(1.0/(1.0 + rPr))
+        P = P - fdP(s, P) * c # k*(k.T*c)
         
         # update the error for the linear readout
         e = z - ft[ti]
-        # e = e.A[0][0]
-        e = e[0]
-        	
+        e = e.A[0][0]
+        
         # update the output weights
-        dw = -e * k * c # k * c or P * r ??
+        dw = - e * P * r # k * c or P * r ??
         wo = wo + dw
          
     zt[ti] = z
-    lmn = tmultrans(wo, wo)
-    wo_len[ti] = sqrt(lmn[0])
+    wo_len[ti] = sqrt(wo.T * wo)
     
 error_avg = sum(abs(zt-ft))/simtime_len;
 print "Training MAE:",str(error_avg)
@@ -163,11 +124,9 @@ print "Now testing... please wait."
 ti = -1
 for t in simtime:
     ti+=1
-    # x = (1.0-dt)*x + M*(r*dt) + wf*(z*dt)
-    x = (1.0-dt)*x + (tmulscal(M, r, dt)) + (tmulscal(wf, z, dt))
+    x = (1.0-dt)*x + M*(r*dt) + wf*(z*dt)
     r = tanh(x)
-    # z = wo.T*r
-    z = (tmultrans(wo, r))
+    z = wo.T * r
     
     zpt[ti] = z
     

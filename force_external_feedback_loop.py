@@ -25,8 +25,9 @@ nsecs = 1440
 dt = 0.1
 learn_every = 2
 
-scale = 1.0/math.sqrt(p*N)
-M = sprandn(N,N,p)*g*scale
+# Same as 1/tau in the paper
+scale = 1.0 / math.sqrt( p * N )
+M = sprandn(N,N,p) * g * scale
 M = mat(M.todense())
 
 nRec2Out = N;
@@ -66,7 +67,9 @@ z = z0
 
 # Indexing starts from 0!
 ti = -1
-P = (1.0/alpha)*mat(eye(nRec2Out))
+P = ( 1.0 / alpha ) * mat(eye(nRec2Out))
+print P.shape
+print r.shape
 
 fig = plt.figure()
 plt.subplot(2,1,1)
@@ -99,24 +102,24 @@ for t in simtime:
             plt.draw()
         
     # sim, so x(t) and r(t) are created.
-    x = (1.0-dt)*x + M*(r*dt) + wf*(z*dt)
+    x = (1.0 - dt) * x + M * ( r * dt ) + wf * ( z * dt )
     r = tanh(x)
     z = wo.T * r
     
     if ti % learn_every == 0:
         # update inverse correlation matrix
-        k = P*r
-        rPr = r.T*k
-        c = 1.0/(1.0 + rPr)
+        # k = P*r
+        # rPr = r.T*k
+        c = 1.0/(1.0 + r.T * P * r)
         c = c.A[0][0]
-        P = P - k*(k.T*c)
+        P = P - (P * r * r.T * P * c) # k*(k.T*c)
         
         # update the error for the linear readout
         e = z - ft[ti]
         e = e.A[0][0]
         	
         # update the output weights
-        dw = -e * k * c # k * c or P * r ??
+        dw = - e * P * r # -e * k * c # k * c or P * r ??
         wo = wo + dw
          
     zt[ti] = z
