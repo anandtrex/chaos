@@ -11,7 +11,7 @@ Created on Sun Apr 29 18:49:06 2012
 
 import math
 from sprandn import sprandn
-from numpy import mat, zeros, random, sin, arange, tanh, eye, sqrt, tile, array
+from numpy import mat, zeros, random, sin, arange, tanh, eye, sqrt, tile
 import matplotlib
 matplotlib.use('GTkAgg')
 import matplotlib.pyplot as plt
@@ -33,15 +33,37 @@ def generateMask(N):
             m[i] = 1
     return m
     
+def generateF1(amp, freq, simtime):
+    f1t = (amp/1.0)*sin(1.0*math.pi*freq*simtime) + \
+         (amp/2.0)*sin(2.0*math.pi*freq*simtime) + \
+         (amp/6.0)*sin(3.0*math.pi*freq*simtime)
+    f1t = f1t / 1.5
+    return f1t
+    
+def generateF2(amp, freq, simtime):
+    f2t = (amp/1.0)*sin(1.0*math.pi*freq*simtime) + \
+         (amp/6.0)*sin(3.0*math.pi*freq*simtime) + \
+         (amp/3.0)*sin(4.0*math.pi*freq*simtime)
+    f2t = f2t / 1.5
+    return f2t
+    
+def generateF3(amp, freq, simtime):
+    f3t = (amp/1.0)*sin(1.0*math.pi*freq*simtime) + \
+         (amp/2.0)*sin(2.0*math.pi*freq*simtime) + \
+         (amp/3.0)*sin(4.0*math.pi*freq*simtime)
+    f3t = f3t / 1.5
+    return f3t
+    
 if __name__ == "__main__":
     N = 1200
     Nin = 100
-    Nselect = 5
+    Nselect = 3
     p = 0.8
     # pz = 0.8 Not sparse for now
-    g = 1.5
+    g = 2.0 # 1.5
     alpha = 80.0
     nsecs = 1440
+    nsecspre = 500
     dt = 0.1
     learn_every = 2
     
@@ -52,41 +74,31 @@ if __name__ == "__main__":
     inweights = random.rand(Nin)
     Min = generateInputWeights(N, Nin)
 
-    I = zeros(Nin)
-    I[:Nselect] = random.rand(Nselect) - 0.5
-    I[Nselect:Nin] = 4 * random.rand(Nin - Nselect) - 2
-    print "I", type(I), I.shape
-    
     nRec2Out = N;
     wo = mat(zeros((nRec2Out, 1)))
     dw = mat(zeros((nRec2Out, 1)))
     
+    simtimepre = arange(0, nsecspre-dt, dt)
+    simtimepre_len = len(simtimepre)
     simtime = arange(0,nsecs-dt,dt)
     simtime_len = len(simtime)
     simtime2 = arange(1*nsecs, 2*nsecs-dt, dt)
     
-    amp = 1.3
+    amp = 2.0
     freq = 1/60.0
-    ft = (amp/1.0)*sin(1.0*math.pi*freq*simtime) + \
-         (amp/2.0)*sin(2.0*math.pi*freq*simtime) + \
-         (amp/6.0)*sin(3.0*math.pi*freq*simtime) + \
-         (amp/3.0)*sin(4.0*math.pi*freq*simtime)
-    ft = ft / 1.5
+    f1t = generateF1(amp, freq, simtime)
+    f2t = generateF2(amp, freq, simtime)
+    f3t = generateF3(amp, freq, simtime)
     
-    ft2 = (amp/1.0)*sin(1.0*math.pi*freq*simtime2) + \
-          (amp/2.0)*sin(2.0*math.pi*freq*simtime2) + \
-          (amp/6.0)*sin(3.0*math.pi*freq*simtime2) + \
-          (amp/3.0)*sin(4.0*math.pi*freq*simtime2)
-    ft2 = ft2 / 1.5
-    
-    #plt.plot(ft2)
+    # Blend together three curves for initial learning
+    fb = f1t + f2t + f3t
     
     wo_len = zeros(simtime_len)
     zt = zeros(simtime_len)
     zpt = zeros(simtime_len)
     
-    x0 = 0.5*mat(random.randn(N,1))
-    z0 = 0.5*mat(random.randn(1,1))
+    x0 = 0.5 * mat(random.randn(N,1))
+    z0 = 0.5 * mat(random.randn(1,1))
     
     x = x0
     r = tanh(x)
@@ -96,9 +108,16 @@ if __name__ == "__main__":
     ti = -1
     P = (1.0/alpha)*mat(eye(nRec2Out))
     
+    # train for f1
+    I1 = mat(1 * random.rand(Nin,1) - 0.5)
+    I2 = mat(1 * random.rand(Nin,1) - 0.5)
+    I3 = mat(1 * random.rand(Nin,1) - 0.5)
+    
+    Ib = I1 + I2 + I3
+    
     fig = plt.figure()
     plt.subplot(2,1,1)
-    p1, = plt.plot(simtime, ft)
+    p1, = plt.plot(simtime, f1t)
     plt.hold(True)
     p2, = plt.plot(simtime, zt)
     plt.title('training')
@@ -116,25 +135,18 @@ if __name__ == "__main__":
     
     dynplot = True
     
-    # train for f1
-    mask = zeros(Nin)
-    mask[:Nselect] = array([1, 0, 0, 0, 0])
-    mask[Nselect:Nin] = generateMask(Nin - Nselect)
-    print "mask", type(mask), mask.shape
-    
     for t in simtime:
         ti += 1
         if ti % (nsecs/2) == 0:
             print "time:",str(t)
             if dynplot == True:
-                p1.set_ydata(ft)
+                p1.set_ydata(f1t)
                 p2.set_ydata(zt)
                 p3.set_ydata(wo_len)
                 plt.draw()
     
-        t = mat(mask * I)
         # sim, so x(t) and r(t) are created.
-        x = (1.0 - dt) * x + M * (r * dt) + Min * t.T
+        x = (1.0 - dt) * x + M * (r * dt) + Min * I1
         r = tanh(x)
         z = wo.T * r
     
@@ -147,7 +159,7 @@ if __name__ == "__main__":
             P = P - k * (k.T * c)
     
             # update the error for the linear readout
-            e = z - ft[ti]
+            e = z - f1t[ti]
             e = e.A[0][0]
     
             # update the output weights
@@ -160,31 +172,35 @@ if __name__ == "__main__":
         zt[ti] = z
         wo_len[ti] = sqrt(wo.T*wo)
     
-    error_avg = sum(abs(zt-ft))/simtime_len;
+    error_avg = sum(abs(zt-f1t))/simtime_len;
     print "Training MAE:",str(error_avg)
     train_error_avg = error_avg
     
     plt.show()
     plt.figure()
     
+    # For testing
+    f1t2 = generateF1(amp, freq, simtime2)
+    f2t2 = generateF2(amp, freq, simtime2)
+    f3t2 = generateF3(amp, freq, simtime2)
+    
     print "Now testing... please wait."
     ti = -1
     for t in simtime:
         ti+=1
         
-        t = mat(mask * I)
-        x = (1.0 - dt) * x + M * (r * dt) + Min  * t.T
+        x = (1.0 - dt) * x + M * (r * dt) + Min  * I1
         r = tanh(x)
         z = wo.T * r
     
         zpt[ti] = z
     
-    error_avg = sum(abs(zpt-ft2))/simtime_len
+    error_avg = sum(abs(zpt-f1t2))/simtime_len
     print "Testing MAE:",str(error_avg)
     test_error_avg = error_avg
     
     plt.subplot(211)
-    plt.plot(simtime, ft)
+    plt.plot(simtime, f1t)
     plt.hold(True)
     plt.plot(simtime, zt)
     plt.title('training')
@@ -196,7 +212,7 @@ if __name__ == "__main__":
     
     plt.subplot(212)
     plt.hold(True)
-    plt.plot(simtime2, ft2)
+    plt.plot(simtime2, f1t2)
     plt.axis('tight')
     plt.plot(simtime2, zpt)
     plt.axis('tight')
