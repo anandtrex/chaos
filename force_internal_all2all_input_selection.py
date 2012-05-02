@@ -18,6 +18,18 @@ import matplotlib.pyplot as plt
 import time
 plt.ion()
 
+N = 1200
+Nin = 100
+Nselect = 3
+p = 0.8
+# pz = 0.8 Not sparse for now
+g = 1.5 # 1.5
+alpha = 1.0 #80.0
+nsecs = 1940
+nsecspre = 500
+dt = 0.1
+learn_every = 2
+    
 
 def generateInputWeights(N, M, mu = 0, sigma = 1):
     mat = zeros((N, M))
@@ -25,13 +37,6 @@ def generateInputWeights(N, M, mu = 0, sigma = 1):
        mat[i][random.randint(M)] = sigma * random.randn() + mu
        
     return mat
-    
-def generateMask(N):
-    m = zeros(N)
-    for i in xrange(0,N):
-        if random.rand() < 0.2:
-            m[i] = 1
-    return m
     
 def generateF1(amp, freq, simtime):
     f1t = (amp/1.0)*sin(1.0*math.pi*freq*simtime) + \
@@ -54,70 +59,39 @@ def generateF3(amp, freq, simtime):
     f3t = f3t / 1.5
     return f3t
     
-if __name__ == "__main__":
-    N = 1200
-    Nin = 100
-    Nselect = 3
-    p = 0.8
-    # pz = 0.8 Not sparse for now
-    g = 2.0 # 1.5
-    alpha = 80.0
-    nsecs = 1440
-    nsecspre = 500
-    dt = 0.1
-    learn_every = 2
-    
-    scale = 1.0/math.sqrt(p*N)
-    M = sprandn(N,N,p)*g*scale
-    M = mat(M.todense())
-    
-    inweights = random.rand(Nin)
-    Min = generateInputWeights(N, Nin)
+scale = 1.0/math.sqrt(p*N)
 
-    nRec2Out = N;
-    wo = mat(zeros((nRec2Out, 1)))
-    dw = mat(zeros((nRec2Out, 1)))
+M = sprandn(N,N,p)*g*scale
+M = mat(M.todense())
+
+Min = generateInputWeights(N, Nin)
+
+nRec2Out = N;
+
+wo = mat(zeros((nRec2Out, 1)))
+dw = mat(zeros((nRec2Out, 1)))
+
+P = (1.0/alpha)*mat(eye(nRec2Out))
+
+x0 = 0.5 * mat(random.randn(N,1))
+z0 = 0.5 * mat(random.randn(1,1))
+
+x = x0
+r = tanh(x)
+z = z0
+
+def forcelearn(prev_simtime_len, simtime, I, f):
     
-    simtimepre = arange(0, nsecspre-dt, dt)
-    simtimepre_len = len(simtimepre)
-    simtime = arange(0,nsecs-dt,dt)
+    global P, wo, M, x, r, z
+    
     simtime_len = len(simtime)
-    simtime2 = arange(1*nsecs, 2*nsecs-dt, dt)
-    
-    amp = 2.0
-    freq = 1/60.0
-    f1t = generateF1(amp, freq, simtime)
-    f2t = generateF2(amp, freq, simtime)
-    f3t = generateF3(amp, freq, simtime)
-    
-    # Blend together three curves for initial learning
-    fb = f1t + f2t + f3t
-    
-    wo_len = zeros(simtime_len)
     zt = zeros(simtime_len)
-    zpt = zeros(simtime_len)
-    
-    x0 = 0.5 * mat(random.randn(N,1))
-    z0 = 0.5 * mat(random.randn(1,1))
-    
-    x = x0
-    r = tanh(x)
-    z = z0
-    
-    # Indexing starts from 0!
+    wo_len = zeros(simtime_len)
     ti = -1
-    P = (1.0/alpha)*mat(eye(nRec2Out))
     
-    # train for f1
-    I1 = mat(1 * random.rand(Nin,1) - 0.5)
-    I2 = mat(1 * random.rand(Nin,1) - 0.5)
-    I3 = mat(1 * random.rand(Nin,1) - 0.5)
-    
-    Ib = I1 + I2 + I3
-    
-    fig = plt.figure()
+    plt.figure()
     plt.subplot(2,1,1)
-    p1, = plt.plot(simtime, f1t)
+    p1, = plt.plot(simtime, f)
     plt.hold(True)
     p2, = plt.plot(simtime, zt)
     plt.title('training')
@@ -133,20 +107,18 @@ if __name__ == "__main__":
     plt.legend('|w|')
     plt.draw()
     
-    dynplot = True
-    
+    # Pre-learning
     for t in simtime:
         ti += 1
         if ti % (nsecs/2) == 0:
             print "time:",str(t)
-            if dynplot == True:
-                p1.set_ydata(f1t)
-                p2.set_ydata(zt)
-                p3.set_ydata(wo_len)
-                plt.draw()
+            p1.set_ydata(f)
+            p2.set_ydata(zt)
+            p3.set_ydata(wo_len)
+            plt.draw()
     
         # sim, so x(t) and r(t) are created.
-        x = (1.0 - dt) * x + M * (r * dt) + Min * I1
+        x = (1.0 - dt) * x + M * (r * dt) + Min * I
         r = tanh(x)
         z = wo.T * r
     
@@ -159,7 +131,7 @@ if __name__ == "__main__":
             P = P - k * (k.T * c)
     
             # update the error for the linear readout
-            e = z - f1t[ti]
+            e = z - f[ti]
             e = e.A[0][0]
     
             # update the output weights
@@ -171,61 +143,102 @@ if __name__ == "__main__":
     
         zt[ti] = z
         wo_len[ti] = sqrt(wo.T*wo)
-    
-    error_avg = sum(abs(zt-f1t))/simtime_len;
+        
+    error_avg = sum(abs(zt-f))/simtime_len;
     print "Training MAE:",str(error_avg)
-    train_error_avg = error_avg
+    # train_error_avg = error_avg
     
-    plt.show()
-    plt.figure()
+    tag = str(time.clock())
     
-    # For testing
-    f1t2 = generateF1(amp, freq, simtime2)
-    f2t2 = generateF2(amp, freq, simtime2)
-    f3t2 = generateF3(amp, freq, simtime2)
+    # Write final errors and graphs to file
+    plt.savefig("testing-"+tag+".png")
     
-    print "Now testing... please wait."
+def forcetest(simtime, I, f):
     ti = -1
+    global x, r, z
+    
+    simtime_len = len(simtime)
+    zpt = zeros(simtime_len)
+    
     for t in simtime:
         ti+=1
         
-        x = (1.0 - dt) * x + M * (r * dt) + Min  * I1
+        x = (1.0 - dt) * x + M * (r * dt) + Min  * I
         r = tanh(x)
         z = wo.T * r
     
         zpt[ti] = z
     
-    error_avg = sum(abs(zpt-f1t2))/simtime_len
-    print "Testing MAE:",str(error_avg)
-    test_error_avg = error_avg
-    
-    plt.subplot(211)
-    plt.plot(simtime, f1t)
+    error_avg = sum(abs(zpt-f))/simtime_len
+    print "Testing MAE1:",str(error_avg)
+
+    plt.figure()    
+    plt.plot(simtime, f)
     plt.hold(True)
-    plt.plot(simtime, zt)
-    plt.title('training')
-    plt.xlabel('time')
-    plt.hold(True)
-    plt.ylabel('f and z')
-    plt.legend(('f', 'z'))
-    
-    
-    plt.subplot(212)
-    plt.hold(True)
-    plt.plot(simtime2, f1t2)
     plt.axis('tight')
-    plt.plot(simtime2, zpt)
+    plt.plot(simtime, zpt)
     plt.axis('tight')
     plt.title('simulation')
     plt.xlabel('time')
     plt.ylabel('f and z')
     plt.legend(('f', 'z'))
     plt.show()
+    
     tag = str(time.clock())
     
     # Write final errors and graphs to file
     plt.savefig("testing-"+tag+".png")
+    '''
     f = open("testing-"+tag+".txt",'w')
     f.write("Training: "+str(train_error_avg)+"\n")
     f.write("Training: "+str(test_error_avg))
     f.close()
+    '''
+    
+if __name__ == "__main__":
+    
+    simtimepre = arange(0, nsecspre-dt, dt)
+    simtimepre_len = len(simtimepre)
+    simtime1 = arange(nsecspre,nsecs-dt,dt)
+    simtime1_len = len(simtime1)
+    simtime2 = arange(1*nsecs,2*nsecs-nsecspre-dt,dt)
+    simtime2_len = len(simtime2)
+    simtime3 = arange(2*nsecs,3*nsecs-nsecspre-dt,dt)
+    simtime3_len = len(simtime3)
+    # simtime_len = simtime1_len + simtime2_len + simtime3_len + simtimepre_len
+    
+    amp = 2.0
+    freq = 1/60.0
+    f1t = generateF1(amp, freq, simtime1)
+    f2t = generateF2(amp, freq, simtime2)
+    f3t = generateF3(amp, freq, simtime3)
+
+    # Blend together three curves for initial learning
+    fb = f1t + f2t + f3t
+    
+    # train for f1
+    I1 = mat(1 * random.rand(Nin,1) - 0.5)
+    I2 = mat(1 * random.rand(Nin,1) - 0.5)
+    I3 = mat(1 * random.rand(Nin,1) - 0.5)
+    
+    Ib = I1 + I2 + I3
+    
+    forcelearn(0, simtimepre, Ib, fb[:simtimepre_len])
+    forcelearn(simtimepre_len, simtime1, I1, f1t)
+    forcelearn(simtime1_len, simtime2, I2, f2t)
+    forcelearn(simtime2_len, simtime3, I3, f3t)
+    
+    # For testing
+    simtimet1 = arange(3*nsecs, 4*nsecs-nsecspre-dt, dt)
+    simtimet2 = arange(4*nsecs, 5*nsecs-nsecspre-dt, dt)
+    simtimet3 = arange(5*nsecs, 6*nsecs-nsecspre-dt, dt)
+    
+    f1t2 = generateF1(amp, freq, simtimet1)
+    f2t2 = generateF2(amp, freq, simtimet2)
+    f3t2 = generateF3(amp, freq, simtimet3)
+    
+    print "Now testing... please wait."
+    
+    forcetest(simtimet1, I1, f1t2)
+    forcetest(simtimet2, I2, f2t2)
+    forcetest(simtimet3, I3, f3t2)
