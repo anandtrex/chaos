@@ -11,13 +11,14 @@ Created on Sun Apr 29 18:49:06 2012
 
 import math
 from sprandn import sprandn
-from numpy import mat, zeros, random, sin, arange, tanh, eye, sqrt, tile
+from numpy import mat, zeros, random, sin, arange, tanh, eye, sqrt, float32, asarray
 import matplotlib
 matplotlib.use('GTkAgg')
 import matplotlib.pyplot as plt
 import datetime
 from  pickle import dump
-#plt.ion()
+from theano import function, shared, Out
+import theano.tensor as T
 
 N = 1200
 Nin = 100
@@ -29,7 +30,7 @@ g = 1.80 # 1.5
 alpha = 1.0 #80.0
 nsecs = 2540
 nsecspre = 800
-dt = 0.1
+dt = float32(0.1)
 learn_every = 2
 interval = 120
 amp = 1.3
@@ -37,11 +38,11 @@ freq = 1/60.0
     
 
 def generateInputWeights(N, M, mu = 0, sigma = 1):
-    mat = zeros((N, M))
+    matr = zeros((N, M))
     for i in xrange(0, N):
-       mat[i][random.randint(M)] = sigma * random.randn() + mu
+       matr[i][random.randint(M)] = sigma * random.randn() + mu
        
-    return mat
+    return matr
     
 def generateF1(amp, freq, simtime):
     f1t = (amp/1.0)*sin(1.0*math.pi*freq*simtime) + \
@@ -67,23 +68,45 @@ def generateF3(amp, freq, simtime):
 scale = 1.0/math.sqrt(p*N)
 
 M = sprandn(N,N,p)*g*scale
-M = mat(M.todense())
+M = float32(M.todense())
 
-Min = generateInputWeights(N, Nin)
+Min = float32(generateInputWeights(N, Nin))
 
 nRec2Out = N;
 
-wo = mat(zeros((nRec2Out, 1)))
-dw = mat(zeros((nRec2Out, 1)))
+x0 = float32(0.5*random.randn(N, 1))
+z0 = float32(0.5*random.randn(1, 1))
 
-P = (1.0/alpha)*mat(eye(nRec2Out))
+P0 = float32((1.0/alpha)*eye(nRec2Out))
 
-x0 = 0.5 * mat(random.randn(N,1))
-z0 = 0.5 * mat(random.randn(1,1))
+x = shared(x0)
+r = shared(tanh(x0))
+z = shared(z0)
+P = shared(P0)
+dts = shared(dt)
+wo = shared(zeros((nRec2Out, 1), dtype=float32))
+wf = shared(float32(2.0*(random.rand(N, 1))-0.5))
+fti = T.scalar('fti')
+Ms = shared(M)
+Mins = shared(Min)
+I = T.matrix('I')
 
-x = x0
-r = tanh(x)
-z = z0
+xnew = (1.0 - dts) * x + T.dot(Ms, r * dts) + T.dot(Mins, I)
+znew = T.dot(T.transpose(wo), r)
+update = function([I],[Out(z, borrow=True)], updates=[(x, xnew), (r, T.tanh(x)), (z, znew)], mode='PROFILE_MODE')
+
+print "Update compiled"
+
+k = T.dot(P, r)
+rPr = T.dot(T.transpose(r), k)
+c = 1.0/(1.0 + rPr)
+Pnew = P  - T.dot(k, k.T)  * c[0][0]
+dw = (z[0][0] - fti) * k * c[0][0]
+wonew = wo - dw
+Mnew = Ms + T.tile(dw.T, (N, 1))
+learn = function([fti],[Out(wo, borrow=True)],updates=[(P, Pnew), (wo, wonew), (Ms, Mnew)], mode='PROFILE_MODE')
+
+print "Learn compiled"
 
 def forcelearn(simtime, I, f):
     
@@ -99,39 +122,14 @@ def forcelearn(simtime, I, f):
         ti += 1
         if ti % (nsecs/2) == 0:
             print "time:",str(t)
-            '''
-            p1.set_ydata(f)
-            p2.set_ydata(zt)
-            p3.set_ydata(wo_len)
-            plt.draw()
-            '''
-    
-        # sim, so x(t) and r(t) are created.
-        x = (1.0 - dt) * x + M * (r * dt) + Min * I
-        r = tanh(x)
-        z = wo.T * r
-    
+        zc, = update(I)
+        zv = asarray(zc)
         if ti % learn_every == 0:
-            # update inverse correlation matrix
-            k = P * r
-            rPr = r.T * k
-            c = 1.0/(1.0 + rPr)
-            c = c.A[0][0]
-            P = P - k * (k.T * c)
-    
-            # update the error for the linear readout
-            e = z - f[ti]
-            e = e.A[0][0]
-    
-            # update the output weights
-            dw = -e * k * c # k * c or P * r ??
-            wo = wo + dw
-            
-            # update the internal weight matrix using the output's error
-            M = M + tile(dw.T, (N, 1))
-    
-        zt[ti] = z
-        wo_len[ti] = sqrt(wo.T*wo)
+            woc, = learn(f[ti])
+            wov = mat(asarray(woc))
+            # M = M + tile(dw.T, (N, 1))
+        zt[ti] = zv
+        wo_len[ti] = sqrt(wov.T*wov)
         
     #plt.figure()
     plt.subplot(2,1,1)
@@ -201,22 +199,24 @@ if __name__ == "__main__":
     simtimepre = arange(0, nsecspre-dt, dt)
     simtimepre_len = len(simtimepre)
     
-    f1t = generateF1(amp, freq, simtimepre)
-    f2t = generateF2(amp, freq, simtimepre)
-    f3t = generateF3(amp, freq, simtimepre)
+    f1t = float32(generateF1(amp, freq, simtimepre))
+    f2t = float32(generateF2(amp, freq, simtimepre))
+    f3t = float32(generateF3(amp, freq, simtimepre))
 
     # Blend together three curves for initial learning
     fb = f1t + f2t + f3t
     
     # train for f1
-    I1 = mat(1 * random.rand(Nin,1) - 0.5)
-    I2 = mat(1 * random.rand(Nin,1) - 0.5)
-    I3 = mat(1 * random.rand(Nin,1) - 0.5)
+    I1 = float32(1 * random.rand(Nin, 1) - 0.5)
+    I2 = float32(1 * random.rand(Nin, 1) - 0.5)
+    I3 = float32(1 * random.rand(Nin, 1) - 0.5)
     
     Ib = I1 + I2 + I3
     
     forcelearn(simtimepre, Ib, fb)
+    
     asdf
+    
     for i in xrange(nsecspre, 3 * nsecs, 3 * interval):
         simtime = arange(i - 3 * interval, i - 2 * interval - dt, dt)
         f1t = generateF1(amp, freq, simtime)

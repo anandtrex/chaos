@@ -21,7 +21,7 @@ N = 1000
 p = 0.1
 g = 1.5
 alpha = 1.0
-nsecs = 1440
+nsecs = 100 #1440
 dt = 0.1
 learn_every = 2
 
@@ -68,38 +68,11 @@ z = z0
 # Indexing starts from 0!
 ti = -1
 P = ( 1.0 / alpha ) * mat(eye(nRec2Out))
-print P.shape
-print r.shape
-
-fig = plt.figure()
-plt.subplot(2,1,1)
-p1, = plt.plot(simtime, ft)
-plt.hold(True)
-p2, = plt.plot(simtime, zt)
-plt.title('training')
-plt.legend(('f','z'));	
-plt.xlabel('time')
-plt.ylabel('f and z')
-plt.hold(False)
-	
-plt.subplot (2,1,2);
-p3, = plt.plot(simtime, wo_len)
-plt.xlabel('time')
-plt.ylabel('|w|')
-plt.legend('|w|')
-plt.draw()
-        
-dynplot = False
 
 for t in simtime:
     ti += 1
     if ti % (nsecs/2) == 0:
         print "time:",str(t)
-        if dynplot == True:
-            p1.set_ydata(ft)
-            p2.set_ydata(zt)
-            p3.set_ydata(wo_len)
-            plt.draw()
         
     # sim, so x(t) and r(t) are created.
     x = (1.0 - dt) * x + M * ( r * dt ) + wf * ( z * dt )
@@ -124,10 +97,30 @@ for t in simtime:
          
     zt[ti] = z
     wo_len[ti] = sqrt(wo.T*wo)
-    
+
 error_avg = sum(abs(zt-ft))/simtime_len;
 print "Training MAE:",str(error_avg)
 train_error_avg = error_avg
+
+asdf
+
+fig = plt.figure()
+plt.subplot(2,1,1)
+p1, = plt.plot(simtime, ft)
+plt.hold(True)
+p2, = plt.plot(simtime, zt)
+plt.title('training')
+plt.legend(('f','z'));	
+plt.xlabel('time')
+plt.ylabel('f and z')
+plt.hold(False)
+	
+plt.subplot (2,1,2);
+p3, = plt.plot(simtime, wo_len)
+plt.xlabel('time')
+plt.ylabel('|w|')
+plt.legend('|w|')
+plt.draw()
 
 plt.show()
 plt.figure()
